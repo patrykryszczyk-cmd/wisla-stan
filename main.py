@@ -1,22 +1,28 @@
 import os
 import requests
 
-# Wpisz swój unikalny temat z aplikacji ntfy
+# Wpisz swoją nazwę tematu z aplikacji ntfy:
 TOPIC = "stan-wody-wisla"
 STATE_FILE = "last_state.txt"
 
 def pobierz_poprzedni_stan():
     if os.path.exists(STATE_FILE):
         with open(STATE_FILE, "r", encoding="utf-8") as f:
-            return f.read().strip()
+            zawartosc = f.read().strip()
+            return int(zawartosc) if zawartosc.lstrip("-").isdigit() else None
     return None
 
 def zapisz_stan(stan):
     with open(STATE_FILE, "w", encoding="utf-8") as f:
         f.write(str(stan))
 
+def formatuj_date(data_raw):
+    # Czyści format daty z ISO (np. 2026-08-25T06:00:00Z -> 2026-08-25 06:00)
+    if not data_raw:
+        return "brak danych"
+    return str(data_raw).replace("T", " ").replace("Z", "")[:16]
+
 def sprawdz_stan_wody():
-    # Pobieranie danych bezpośrednio z produkcyjnego API hydro.imgw.pl (stacja Toruń: 153180120)
     url = "https://hydro-back.imgw.pl/station/hydro/status?id=153180120"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
@@ -27,47 +33,67 @@ def sprawdz_stan_wody():
         response.raise_for_status()
         dane = response.json()
 
-        # Odczyt danych ze struktury hydro-back
         status_info = dane.get("status", dane)
-        aktualny_stan = status_info.get("currentState") or status_info.get("waterLevel") or status_info.get("value")
-        data_pomiaru = status_info.get("date") or status_info.get("measurementDate") or "Brak daty"
+        stan_raw = status_info.get("currentState") or status_info.get("waterLevel") or status_info.get("value")
+        data_pomiaru_raw = status_info.get("date") or status_info.get("measurementDate")
 
-        if aktualny_stan is None:
-            print(f"Nie udało się odczytać stanu wody z odpowiedzi: {dane}")
+        if stan_raw is None:
+            print(f"Nie udało się odczytać stanu wody: {dane}")
             return
 
-        aktualny_stan = str(aktualny_stan)
+        aktualny_stan = int(stan_raw)
+        data_pomiaru = formatuj_date(data_pomiaru_raw)
         poprzedni_stan = pobierz_poprzedni_stan()
 
         # Jeśli stan się nie zmienił, nie wysyłaj powiadomienia
-        if poprzedni_stan == aktualny_stan:
+        if poprzedni_stan is not None and poprzedni_stan == aktualny_stan:
             print(f"Brak zmian: stan nadal wynosi {aktualny_stan} cm.")
             return
 
-        # Różnica w cm względem ostatniego pomiaru
-        roznica_tekst = ""
-        if poprzedni_stan and poprzedni_stan.isdigit() and aktualny_stan.isdigit():
-            roznica = int(aktualny_stan) - int(poprzedni_stan)
-            znak = "+" if roznica > 0 else ""
-            roznica_tekst = f" ({znak}{roznica} cm)"
+        # Wyznaczenie tendencji i różnicy
+        if poprzedni_stan is not None:
+            roznica = aktualny_stan - poprzedni_stan
+            if roznica > 0:
+                tendencja_tekst = f"📈 Wzrost (+{roznica} cm)"
+                tytul_roznica = f" (+{roznica} cm)"
+                tag_trend = "chart_with_upwards_trend"
+            elif roznica < 0:
+                tendencja_tekst = f"📉 Spadek ({roznica} cm)"
+                tytul_roznica = f" ({roznica} cm)"
+                tag_trend = "chart_with_downwards_trend"
+            else:
+                tendencja_tekst = "➡️ Bez zmian"
+                tytul_roznica = ""
+                tag_trend = "arrow_right"
+            poprzedni_opis = f"Poprzedni stan: {poprzedni_stan} cm\n"
+        else:
+            tendencja_tekst = "ℹ️ Pierwszy odczyt bota"
+            tytul_roznica = ""
+            tag_trend = "droplet"
+            poprzedni_opis = ""
 
-        komunikat = f"Poziom wody: {aktualny_stan} cm{roznica_tekst}\nPomiar z: {data_pomiaru}"
-        
-        stan_num = int(aktualny_stan) if aktualny_stan.isdigit() else 0
-        priorytet = 4 if stan_num >= 530 else 3
+        # Czytelny komunikat
+        komunikat = (
+            f"📏 Aktualny stan: {aktualny_stan} cm\n"
+            f"📊 Tendencja: {tendencja_tekst}\n"
+            f"{poprzedni_opis}"
+            f"🕒 Data pomiaru: {data_pomiaru}"
+        )
+
+        priorytet = 4 if aktualny_stan >= 530 else 3
 
         payload = {
             "topic": TOPIC,
-            "title": f"Wisła Toruń: {aktualny_stan} cm{roznica_tekst}",
+            "title": f"Wisła Toruń: {aktualny_stan} cm{tytul_roznica}",
             "message": komunikat,
             "priority": priorytet,
-            "tags": ["droplet", "water"]
+            "tags": ["ocean", tag_trend]
         }
 
         odpowiedz = requests.post("https://ntfy.sh", json=payload, timeout=10)
         odpowiedz.raise_for_status()
 
-        print(f"Wysłano powiadomienie: {aktualny_stan} cm (poprzednio: {poprzedni_stan}).")
+        print(f"Wysłano powiadomienie: {aktualny_stan} cm.")
         zapisz_stan(aktualny_stan)
 
     except Exception as err:
