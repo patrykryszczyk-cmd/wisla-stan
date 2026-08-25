@@ -25,7 +25,7 @@ def pobierz_dane_torun():
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     }
 
-    # 1. Główne źródło: Oficjalne API otwartych danych IMGW (pełna lista stacji)
+    # 1. Główne źródło: API otwartych danych IMGW
     url_public = "https://danepubliczne.imgw.pl/api/data/hydro/"
     try:
         res = requests.get(url_public, headers=headers, timeout=15)
@@ -78,7 +78,7 @@ def sprawdz_stan_wody():
 
         # Wyznaczenie tendencji i różnicy
         if poprzedni_stan is not None and poprzedni_stan != 0:
-            roznica = aktualny_stan -理 pop_roznica = aktualny_stan - poprzedni_stan
+            roznica = aktualny_stan - poprzedni_stan
             if roznica > 0:
                 tendencja_tekst = f"📈 Wzrost (+{roznica} cm)"
                 tytul_roznica = f" (+{roznica} cm)"
