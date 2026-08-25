@@ -27,7 +27,7 @@ def sprawdz_stan_wody():
         dane = response.json()
         
         # Zostawiam "Silno" na czas awarii wodowskazu w Toruniu
-        stacja = next((item for item in dane if item.get("stacja") == "Silno" and item.get("rzeka") == "Wisła"), None)
+        stacja = next((item for item in dane if item.get("stacja") == "Toruń" and item.get("rzeka") == "Wisła"), None)
         
         if not stacja:
             print("Nie znaleziono stacji w API.")
