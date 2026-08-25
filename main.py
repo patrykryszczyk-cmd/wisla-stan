@@ -1,7 +1,7 @@
 import os
 import requests
 
-# Wpisz swoją nazwę tematu z aplikacji ntfy:
+# Twój stały kanał ntfy:
 TOPIC = "stan-wody-wisla"
 STATE_FILE = "last_state.txt"
 
@@ -17,10 +17,37 @@ def zapisz_stan(stan):
         f.write(str(stan))
 
 def formatuj_date(data_raw):
-    # Czyści format daty z ISO (np. 2026-08-25T06:00:00Z -> 2026-08-25 06:00)
     if not data_raw:
         return "brak danych"
     return str(data_raw).replace("T", " ").replace("Z", "")[:16]
+
+def parsuj_dane_imgw(dane):
+    status_info = dane.get("status", dane) if isinstance(dane, dict) else {}
+    
+    stan_val = None
+    data_val = None
+
+    # Obsługa zagnieżdżonego słownika currentState
+    curr = status_info.get("currentState")
+    if isinstance(curr, dict):
+        stan_val = curr.get("value") or curr.get("waterLevel")
+        data_val = curr.get("date") or curr.get("measurementDate")
+    elif isinstance(curr, (int, float, str)):
+        stan_val = curr
+
+    # Alternatywne pola zapasowe
+    if stan_val is None:
+        wl = status_info.get("waterLevel")
+        if isinstance(wl, dict):
+            stan_val = wl.get("value")
+            data_val = data_val or wl.get("date")
+        else:
+            stan_val = wl or status_info.get("value")
+
+    if data_val is None:
+        data_val = status_info.get("date") or status_info.get("measurementDate") or "Brak daty"
+
+    return stan_val, data_val
 
 def sprawdz_stan_wody():
     url = "https://hydro-back.imgw.pl/station/hydro/status?id=153180120"
@@ -33,15 +60,13 @@ def sprawdz_stan_wody():
         response.raise_for_status()
         dane = response.json()
 
-        status_info = dane.get("status", dane)
-        stan_raw = status_info.get("currentState") or status_info.get("waterLevel") or status_info.get("value")
-        data_pomiaru_raw = status_info.get("date") or status_info.get("measurementDate")
+        stan_raw, data_pomiaru_raw = parsuj_dane_imgw(dane)
 
         if stan_raw is None:
-            print(f"Nie udało się odczytać stanu wody: {dane}")
+            print(f"Nie udało się odczytać wartości ze struktury: {dane}")
             return
 
-        aktualny_stan = int(stan_raw)
+        aktualny_stan = int(float(str(stan_raw).strip()))
         data_pomiaru = formatuj_date(data_pomiaru_raw)
         poprzedni_stan = pobierz_poprzedni_stan()
 
@@ -72,7 +97,7 @@ def sprawdz_stan_wody():
             tag_trend = "droplet"
             poprzedni_opis = ""
 
-        # Czytelny komunikat
+        # Sformatowany komunikat
         komunikat = (
             f"📏 Aktualny stan: {aktualny_stan} cm\n"
             f"📊 Tendencja: {tendencja_tekst}\n"
