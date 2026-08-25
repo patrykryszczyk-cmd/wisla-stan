@@ -1,9 +1,8 @@
 import os
 import requests
 
-# TUTAJ WPISZ SWOJĄ NAZWĘ Z KROKU 1:
-TOPIC = "stan-wody-wisla"
-
+# Wpisz swój unikalny temat z aplikacji ntfy
+TOPIC = "wisla-torun-alarm-9921"
 STATE_FILE = "last_state.txt"
 
 def pobierz_poprzedni_stan():
@@ -51,20 +50,21 @@ def sprawdz_stan_wody():
         komunikat = f"Poziom wody: {aktualny_stan} cm{roznica_tekst}\nPomiar z: {data_pomiaru}\nTemp. wody: {temp_tekst}"
         
         stan_num = int(aktualny_stan) if aktualny_stan and aktualny_stan.isdigit() else 0
-        priorytet = "high" if stan_num >= 530 else "default"
-        
-        requests.post(
-            f"https://ntfy.sh/{TOPIC}",
-            data=komunikat.encode("utf-8"),
-            headers={
-                "Title": f"Wisła Toruń: {aktualny_stan} cm{roznica_tekst}",
-                "Priority": priorytet,
-                "Tags": "droplet,water"
-            },
-            timeout=10
-        )
-        print(f"Wysłano powiadomienie: {aktualny_stan} cm (poprzednio: {poprzedni_stan}).")
+        priorytet = 4 if stan_num >= 530 else 3
 
+        # Wysłanie powiadomienia przez JSON (bezpieczne dla polskich znaków)
+        payload = {
+            "topic": TOPIC,
+            "title": f"Wisła Toruń: {aktualny_stan} cm{roznica_tekst}",
+            "message": komunikat,
+            "priority": priorytet,
+            "tags": ["droplet", "water"]
+        }
+
+        odpowiedz = requests.post("https://ntfy.sh", json=payload, timeout=10)
+        odpowiedz.raise_for_status()
+
+        print(f"Wysłano powiadomienie: {aktualny_stan} cm (poprzednio: {poprzedni_stan}).")
         zapisz_stan(aktualny_stan)
 
     except Exception as err:
