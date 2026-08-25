@@ -27,22 +27,20 @@ def parsuj_dane_imgw(dane):
     stan_val = None
     data_val = None
 
-    # Obsługa zagnieżdżonego słownika currentState
-    curr = status_info.get("currentState")
-    if isinstance(curr, dict):
-        stan_val = curr.get("value") or curr.get("waterLevel")
-        data_val = curr.get("date") or curr.get("measurementDate")
-    elif isinstance(curr, (int, float, str)):
-        stan_val = curr
+    # 1. Prawidłowe pole z pomiarem poziomu wody w IMGW (waterLevel)
+    wl = status_info.get("waterLevel")
+    if isinstance(wl, dict):
+        stan_val = wl.get("value")
+        data_val = wl.get("date")
+    elif isinstance(wl, (int, float, str)) and wl is not None:
+        stan_val = wl
 
-    # Alternatywne pola zapasowe
+    # 2. Pola rezerwowe
     if stan_val is None:
-        wl = status_info.get("waterLevel")
-        if isinstance(wl, dict):
-            stan_val = wl.get("value")
-            data_val = data_val or wl.get("date")
-        else:
-            stan_val = wl or status_info.get("value")
+        curr = status_info.get("currentState")
+        if isinstance(curr, dict):
+            stan_val = curr.get("waterLevel")
+            data_val = data_val or curr.get("date")
 
     if data_val is None:
         data_val = status_info.get("date") or status_info.get("measurementDate") or "Brak daty"
@@ -59,11 +57,12 @@ def sprawdz_stan_wody():
         response = requests.get(url, headers=headers, timeout=15)
         response.raise_for_status()
         dane = response.json()
+        print(f"Odebrane dane z IMGW: {dane}")
 
         stan_raw, data_pomiaru_raw = parsuj_dane_imgw(dane)
 
         if stan_raw is None:
-            print(f"Nie udało się odczytać wartości ze struktury: {dane}")
+            print(f"Nie udało się odczytać poziomu wody ze struktury: {dane}")
             return
 
         aktualny_stan = int(float(str(stan_raw).strip()))
@@ -76,7 +75,7 @@ def sprawdz_stan_wody():
             return
 
         # Wyznaczenie tendencji i różnicy
-        if poprzedni_stan is not None:
+        if poprzedni_stan is not None and poprzedni_stan != 0:
             roznica = aktualny_stan - poprzedni_stan
             if roznica > 0:
                 tendencja_tekst = f"📈 Wzrost (+{roznica} cm)"
@@ -97,7 +96,6 @@ def sprawdz_stan_wody():
             tag_trend = "droplet"
             poprzedni_opis = ""
 
-        # Sformatowany komunikat
         komunikat = (
             f"📏 Aktualny stan: {aktualny_stan} cm\n"
             f"📊 Tendencja: {tendencja_tekst}\n"
