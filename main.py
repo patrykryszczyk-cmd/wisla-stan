@@ -16,23 +16,27 @@ def zapisz_stan(stan):
         f.write(str(stan))
 
 def sprawdz_stan_wody():
-    url = "https://danepubliczne.imgw.pl/api/data/hydro/"
+    # Pobieranie danych bezpośrednio z produkcyjnego API hydro.imgw.pl (stacja Toruń: 153180120)
+    url = "https://hydro-back.imgw.pl/station/hydro/status?id=153180120"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    }
+
     try:
-        response = requests.get(url, timeout=15)
+        response = requests.get(url, headers=headers, timeout=15)
         response.raise_for_status()
         dane = response.json()
-        
-        torun = next((item for item in dane if item.get("stacja") == "Toruń" and item.get("rzeka") == "Wisła"), None)
-        
-        if not torun:
-            print("Nie znaleziono stacji Toruń w API.")
+
+        # Odczyt danych ze struktury hydro-back
+        status_info = dane.get("status", dane)
+        aktualny_stan = status_info.get("currentState") or status_info.get("waterLevel") or status_info.get("value")
+        data_pomiaru = status_info.get("date") or status_info.get("measurementDate") or "Brak daty"
+
+        if aktualny_stan is None:
+            print(f"Nie udało się odczytać stanu wody z odpowiedzi: {dane}")
             return
 
-        aktualny_stan = torun.get("stan_wody")
-        data_pomiaru = torun.get("stan_wody_data_pomiaru", "Brak daty")
-        temp = torun.get("temperatura_wody")
-        temp_tekst = f"{temp}°C" if temp else "brak danych"
-
+        aktualny_stan = str(aktualny_stan)
         poprzedni_stan = pobierz_poprzedni_stan()
 
         # Jeśli stan się nie zmienił, nie wysyłaj powiadomienia
@@ -42,17 +46,16 @@ def sprawdz_stan_wody():
 
         # Różnica w cm względem ostatniego pomiaru
         roznica_tekst = ""
-        if poprzedni_stan and poprzedni_stan.isdigit() and aktualny_stan and aktualny_stan.isdigit():
+        if poprzedni_stan and poprzedni_stan.isdigit() and aktualny_stan.isdigit():
             roznica = int(aktualny_stan) - int(poprzedni_stan)
             znak = "+" if roznica > 0 else ""
             roznica_tekst = f" ({znak}{roznica} cm)"
 
-        komunikat = f"Poziom wody: {aktualny_stan} cm{roznica_tekst}\nPomiar z: {data_pomiaru}\nTemp. wody: {temp_tekst}"
+        komunikat = f"Poziom wody: {aktualny_stan} cm{roznica_tekst}\nPomiar z: {data_pomiaru}"
         
-        stan_num = int(aktualny_stan) if aktualny_stan and aktualny_stan.isdigit() else 0
+        stan_num = int(aktualny_stan) if aktualny_stan.isdigit() else 0
         priorytet = 4 if stan_num >= 530 else 3
 
-        # Wysłanie powiadomienia przez JSON (bezpieczne dla polskich znaków)
         payload = {
             "topic": TOPIC,
             "title": f"Wisła Toruń: {aktualny_stan} cm{roznica_tekst}",
