@@ -2,7 +2,7 @@ import os
 import requests
 
 # Wpisz swój unikalny temat z aplikacji ntfy
-TOPIC = "wisla-torun-alarm-9921"
+TOPIC = "stan-wody-wisla"
 STATE_FILE = "last_state.txt"
 
 def pobierz_poprzedni_stan():
