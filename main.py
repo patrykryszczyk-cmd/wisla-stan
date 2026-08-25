@@ -5,6 +5,9 @@ import requests
 TOPIC = "stan-wody-wisla"
 STATE_FILE = "last_state.txt"
 
+# ID stacji Wisła - Toruń w IMGW
+STATION_ID = "153180180"
+
 def pobierz_poprzedni_stan():
     if os.path.exists(STATE_FILE):
         with open(STATE_FILE, "r", encoding="utf-8") as f:
@@ -21,34 +24,8 @@ def formatuj_date(data_raw):
         return "brak danych"
     return str(data_raw).replace("T", " ").replace("Z", "")[:16]
 
-def parsuj_dane_imgw(dane):
-    status_info = dane.get("status", dane) if isinstance(dane, dict) else {}
-    
-    stan_val = None
-    data_val = None
-
-    # 1. Prawidłowe pole z pomiarem poziomu wody w IMGW (waterLevel)
-    wl = status_info.get("waterLevel")
-    if isinstance(wl, dict):
-        stan_val = wl.get("value")
-        data_val = wl.get("date")
-    elif isinstance(wl, (int, float, str)) and wl is not None:
-        stan_val = wl
-
-    # 2. Pola rezerwowe
-    if stan_val is None:
-        curr = status_info.get("currentState")
-        if isinstance(curr, dict):
-            stan_val = curr.get("waterLevel")
-            data_val = data_val or curr.get("date")
-
-    if data_val is None:
-        data_val = status_info.get("date") or status_info.get("measurementDate") or "Brak daty"
-
-    return stan_val, data_val
-
 def sprawdz_stan_wody():
-    url = "https://hydro-back.imgw.pl/station/hydro/status?id=153180120"
+    url = f"https://hydro-back.imgw.pl/station/hydro/status?id={STATION_ID}"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     }
@@ -57,19 +34,22 @@ def sprawdz_stan_wody():
         response = requests.get(url, headers=headers, timeout=15)
         response.raise_for_status()
         dane = response.json()
-        print(f"Odebrane dane z IMGW: {dane}")
 
-        stan_raw, data_pomiaru_raw = parsuj_dane_imgw(dane)
+        status_info = dane.get("status", {})
+        current_state = status_info.get("currentState", {})
 
-        if stan_raw is None:
-            print(f"Nie udało się odczytać poziomu wody ze struktury: {dane}")
+        stan_val = current_state.get("value")
+        data_val = current_state.get("date")
+
+        if stan_val is None:
+            print(f"Nie udało się odczytać wartości ze struktury: {dane}")
             return
 
-        aktualny_stan = int(float(str(stan_raw).strip()))
-        data_pomiaru = formatuj_date(data_pomiaru_raw)
+        aktualny_stan = int(float(stan_val))
+        data_pomiaru = formatuj_date(data_val)
         poprzedni_stan = pobierz_poprzedni_stan()
 
-        # Jeśli stan się nie zmienił, nie wysyłaj powiadomienia
+        # Jeśli stan się nie zmienił, pomijamy powiadomienie
         if poprzedni_stan is not None and poprzedni_stan == aktualny_stan:
             print(f"Brak zmian: stan nadal wynosi {aktualny_stan} cm.")
             return
