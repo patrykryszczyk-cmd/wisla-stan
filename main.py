@@ -1,5 +1,10 @@
 import os
+import socket
 import requests
+import urllib3.util.connection as urllib_connection
+
+# Wymuszenie IPv4 (zapobiega błędowi 'Network is unreachable' na GitHub Actions)
+urllib_connection.allowed_gai_family = lambda: socket.AF_INET
 
 TOPIC = "stan-wody-wisla"
 STATE_FILE = "last_state.txt"
@@ -20,12 +25,37 @@ def formatuj_date(data_raw):
         return "brak danych"
     return str(data_raw).replace("T", " ").replace("Z", "")[:16]
 
+def wyciagnij_wartosc(pole):
+    if isinstance(pole, dict):
+        return pole.get("value") or pole.get("waterLevel")
+    return pole
+
 def pobierz_dane_torun():
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     }
 
-    # 1. Główne źródło: API otwartych danych IMGW
+    # 1. Główne źródło na żywo: oficjalna lista portalu hydro.imgw.pl
+    url_live = "https://hydro-back.imgw.pl/list/hydro"
+    try:
+        res = requests.get(url_live, headers=headers, timeout=15)
+        if res.status_code == 200:
+            lista = res.json()
+            if isinstance(lista, list):
+                for stacja in lista:
+                    nazwa = str(stacja.get("name") or stacja.get("station") or stacja.get("description") or "").lower()
+                    rzeka = str(stacja.get("river") or "").lower()
+                    if "toruń" in nazwa or ("torun" in nazwa and "wisła" in rzeka):
+                        stan = wyciagnij_wartosc(stacja.get("currentState") or stacja.get("waterLevel") or stacja.get("value"))
+                        data = stacja.get("date") or stacja.get("measurementDate")
+                        if isinstance(data, dict):
+                            data = data.get("date")
+                        if stan is not None:
+                            return int(float(stan)), formatuj_date(data)
+    except Exception as e:
+        print(f"Błąd pobierania z hydro-back list: {e}")
+
+    # 2. Źródło zapasowe: otwarte dane publiczne
     url_public = "https://danepubliczne.imgw.pl/api/data/hydro/"
     try:
         res = requests.get(url_public, headers=headers, timeout=15)
@@ -40,23 +70,6 @@ def pobierz_dane_torun():
                             return int(float(stan)), formatuj_date(data)
     except Exception as e:
         print(f"Błąd pobierania z danepubliczne: {e}")
-
-    # 2. Zapasowe źródło: API hydro-back
-    url_hydro = "https://hydro-back.imgw.pl/station/hydro/status?id=153180120"
-    try:
-        res = requests.get(url_hydro, headers=headers, timeout=15)
-        if res.status_code == 200:
-            dane = res.json()
-            status_obj = dane.get("status") if isinstance(dane, dict) else None
-            if isinstance(status_obj, dict):
-                curr = status_obj.get("currentState")
-                if isinstance(curr, dict):
-                    val = curr.get("value")
-                    data = curr.get("date")
-                    if val is not None:
-                        return int(float(val)), formatuj_date(data)
-    except Exception as e:
-        print(f"Błąd pobierania z hydro-back: {e}")
 
     return None, None
 
@@ -115,10 +128,11 @@ def sprawdz_stan_wody():
             "tags": ["ocean", tag_trend]
         }
 
-        odpowiedz = requests.post("https://ntfy.sh", json=payload, timeout=10)
+        # Wysłanie powiadomienia do ntfy.sh
+        odpowiedz = requests.post(f"https://ntfy.sh/{TOPIC}", json=payload, timeout=15)
         odpowiedz.raise_for_status()
 
-        print(f"Wysłano powiadomienie do ntfy: {aktualny_stan} cm.")
+        print(f"Sukces! Wysłano powiadomienie: {aktualny_stan} cm.")
         zapisz_stan(aktualny_stan)
 
     except Exception as err:
