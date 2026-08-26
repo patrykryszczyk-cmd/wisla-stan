@@ -3,7 +3,7 @@ import requests
 from datetime import datetime
 import pytz
 
-# TUTAJ WPISZ SWOJĄ NAZWĘ Z KROKU 1:
+# Ustawiona Twoja nazwa kanału ntfy
 TOPIC = "stan-wody-wisla"
 
 STATE_FILE = "last_state.txt"
@@ -26,11 +26,11 @@ def sprawdz_stan_wody():
         response.raise_for_status()
         dane = response.json()
         
-        # Zostawiam "Silno" na czas awarii wodowskazu w Toruniu
-        stacja = next((item for item in dane if item.get("stacja") == "Toruń" and item.get("rzeka") == "Wisła"), None)
+        # Wyszukiwanie bezpośrednio po ID stacji Toruń
+        stacja = next((item for item in dane if item.get("id_stacji") == "153180090"), None)
         
         if not stacja:
-            print("Nie znaleziono stacji w API.")
+            print("Nie znaleziono stacji w API (błędne ID lub awaria IMGW).")
             return
 
         aktualny_stan = stacja.get("stan_wody")
@@ -79,11 +79,14 @@ def sprawdz_stan_wody():
         stan_num = int(aktualny_stan) if aktualny_stan and aktualny_stan.isdigit() else 0
         priorytet = "high" if stan_num >= 530 else "default"
         
+        # Słowo Title zostało odpowiednio zakodowane w utf-8, żeby błąd z polskimi znakami nie wyrzucał błędu
+        title_encoded = f"Wisła: {aktualny_stan} cm [{naglowek}]".encode("utf-8")
+        
         requests.post(
             f"https://ntfy.sh/{TOPIC}",
             data=komunikat.encode("utf-8"),
             headers={
-                "Title": f"Wisła: {aktualny_stan} cm [{naglowek}]".encode("utf-8"),
+                "Title": title_encoded,
                 "Priority": priorytet,
                 "Tags": "droplet,water"
             },
