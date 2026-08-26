@@ -20,20 +20,6 @@ def zapisz_plik(nazwa, tresc):
     with open(nazwa, "w", encoding="utf-8") as f:
         f.write(str(tresc))
 
-def znajdz_wartosc(dane, szukane_klucze):
-    # Szukanie wartości w surowych danych systemowych IMGW
-    if isinstance(dane, dict):
-        for k, v in dane.items():
-            if k.lower() in szukane_klucze and v is not None:
-                return v
-            res = znajdz_wartosc(v, szukane_klucze)
-            if res is not None: return res
-    elif isinstance(dane, list):
-        for item in dane:
-            res = znajdz_wartosc(item, szukane_klucze)
-            if res is not None: return res
-    return None
-
 def sprawdz_stan_wody():
     url = "https://hydro.imgw.pl/#/station/hydro/153180090?h=25"
     
@@ -42,70 +28,50 @@ def sprawdz_stan_wody():
     przeplyw = "Brak danych"
     temperatura = "Brak danych"
     
-    print("Otwieram wirtualną przeglądarkę (ekran Full HD) i ładuję mapę IMGW...")
+    tz_pl = pytz.timezone('Europe/Warsaw')
+    teraz_pl = datetime.now(tz_pl)
+    dzisiaj_str = teraz_pl.strftime("%Y-%m-%d")
+    
+    print("Otwieram wirtualną przeglądarkę i ładuję mapę IMGW...")
     
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        # Ustawiamy duży ekran, by strona nie ukrywała tabel
         context = browser.new_context(viewport={'width': 1920, 'height': 1080})
         page = context.new_page()
         
-        ukryte_dane = {}
-        
-        def handle_response(response):
-            if "153180090" in response.url and response.status == 200:
-                try:
-                    ukryte_dane["dane"] = response.json()
-                except:
-                    pass
-                    
-        page.on("response", handle_response)
-        
         page.goto(url, wait_until="networkidle")
-        # Wydłużamy czas do 10 sekund dla pewności
         page.wait_for_timeout(10000)
         
         tekst = page.inner_text("body")
         tekst_czysty = re.sub(r'\s+', ' ', tekst)
         
-        # METODA 1: Najbardziej precyzyjna (czytanie surowych danych systemowych)
-        if "dane" in ukryte_dane:
-            dane_json = ukryte_dane["dane"]
+        # Nowa, super-precyzyjna metoda: wyciąganie danych prosto z wiersza tabeli
+        # Przykład, którego szuka skrypt: "25.08 06:00 UTC 79 246 19,2"
+        m_row = re.search(r'(\d{2})\.(\d{2})\s+(\d{2}:\d{2})\s+UTC\s+(\d+)(?:\s+(\d+|-))?(?:\s+(\d+,\d+|-))?', tekst_czysty)
+        
+        if m_row:
+            dzien = m_row.group(1)
+            miesiac = m_row.group(2)
+            godzina = m_row.group(3)
+            # Składamy ładną datę np. 2026-08-25 06:00
+            data_pomiaru = f"{teraz_pl.year}-{miesiac}-{dzien} {godzina}"
             
-            stan_siec = znajdz_wartosc(dane_json, ["stanwody", "waterlevel"])
-            if stan_siec is not None: aktualny_stan = str(int(float(stan_siec)))
+            aktualny_stan = m_row.group(4)
+            
+            p_val = m_row.group(5)
+            if p_val and p_val != '-': przeplyw = p_val + " m³/s"
                 
-            przep_siec = znajdz_wartosc(dane_json, ["przeplyw", "flow", "discharge"])
-            if przep_siec is not None: przeplyw = str(przep_siec) + " m³/s"
-                
-            temp_siec = znajdz_wartosc(dane_json, ["temperatura", "temperature", "watertemperature"])
-            if temp_siec is not None: temperatura = str(temp_siec) + " °C"
-                
-            data_siec = znajdz_wartosc(dane_json, ["date", "measurementdate", "datemeasure"])
-            if data_siec is not None: data_pomiaru = str(data_siec).replace("T", " ")[:16]
-
-        # METODA 2: Awaryjne czytanie tekstu, jeśli metoda 1 zawiedzie
-        if not aktualny_stan:
-            m_stan = re.search(r'Stan wody[^0-9]{0,30}(\d+)', tekst_czysty, re.IGNORECASE)
+            t_val = m_row.group(6)
+            if t_val and t_val != '-': temperatura = t_val.replace(',', '.') + " °C"
+        else:
+            # Zapasowe szukanie, gdyby IMGW znowu wyłączyło tabelę
+            m_stan = re.search(r'(?:STAN AKTUALNY|STAN OSTATNI).*?(\d+)\s*cm', tekst_czysty, re.IGNORECASE)
             if m_stan: aktualny_stan = m_stan.group(1)
 
-        if przeplyw == "Brak danych":
-            m_przep = re.search(r'Przepływ[^0-9]{0,30}(\d+[.,]?\d*)', tekst_czysty, re.IGNORECASE)
-            if m_przep: przeplyw = m_przep.group(1) + " m³/s"
-
-        if temperatura == "Brak danych":
-            m_temp = re.search(r'Temperatura wody[^0-9]{0,30}(\d+[.,]?\d*)', tekst_czysty, re.IGNORECASE)
-            if m_temp: temperatura = m_temp.group(1) + " °C"
-
-        if data_pomiaru == "Brak danych":
-            daty = re.findall(r'202\d-\d\d-\d\d \d\d:\d\d', tekst_czysty)
-            if daty: data_pomiaru = daty[0]
-
-        # Dodatkowy log w razie kolejnego błędu
         if not aktualny_stan:
-            print("\n--- ZRZUT EKRANU (TEKST) DO DEBUGOWANIA ---")
+            print("\n--- ZRZUT EKRANU DO DEBUGOWANIA ---")
             print(tekst_czysty[:2000])
-            print("-------------------------------------------\n")
+            print("-----------------------------------\n")
 
         browser.close()
 
@@ -115,10 +81,6 @@ def sprawdz_stan_wody():
 
     poprzedni_stan = pobierz_plik(STATE_FILE)
     ostatni_raport_dzien = pobierz_plik(DAILY_FILE)
-
-    tz_pl = pytz.timezone('Europe/Warsaw')
-    teraz_pl = datetime.now(tz_pl)
-    dzisiaj_str = teraz_pl.strftime("%Y-%m-%d")
     
     czas_na_raport = (teraz_pl.hour == 6) and (ostatni_raport_dzien != dzisiaj_str)
     stan_zmieniony = (poprzedni_stan != aktualny_stan)
