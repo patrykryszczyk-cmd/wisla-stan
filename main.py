@@ -83,7 +83,7 @@ def sprawdz_stan_wody():
             f"https://ntfy.sh/{TOPIC}",
             data=komunikat.encode("utf-8"),
             headers={
-                "Title": f"Wisła: {aktualny_stan} cm [{naglowek}]",
+                "Title": f"Wisła: {aktualny_stan} cm [{naglowek}]".encode("utf-8"),
                 "Priority": priorytet,
                 "Tags": "droplet,water"
             },
