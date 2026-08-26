@@ -2,7 +2,6 @@ name: Monitoring Wisly w Toruniu
 
 on:
   schedule:
-    # Uruchamianie co 30 minut
     - cron: '*/30 * * * *'
   workflow_dispatch:
 
@@ -21,8 +20,10 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Instalacja zaleznosci
-        run: pip install requests pytz
+      - name: Instalacja bibliotek i przegladarki
+        run: |
+          pip install requests pytz playwright
+          playwright install chromium
 
       - name: Uruchomienie skryptu
         run: python main.py
