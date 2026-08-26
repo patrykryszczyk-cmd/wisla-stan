@@ -1,6 +1,5 @@
 import os
 import re
-import json
 from datetime import datetime
 import pytz
 from playwright.sync_api import sync_playwright
@@ -21,25 +20,13 @@ def zapisz_plik(nazwa, tresc):
     with open(nazwa, "w", encoding="utf-8") as f:
         f.write(str(tresc))
 
-# Funkcja do wyszukiwania danych w ukrytych odpowiedziach serwera IMGW
-def znajdz_wartosc(dane, klucze):
-    if isinstance(dane, dict):
-        for k, v in dane.items():
-            if k in klucze: return v
-            res = znajdz_wartosc(v, klucze)
-            if res is not None: return res
-    elif isinstance(dane, list):
-        for item in dane:
-            res = znajdz_wartosc(item, klucze)
-            if res is not None: return res
-    return None
-
 def sprawdz_stan_wody():
-    # Link, który mi podałeś - udajemy, że wchodzimy na tę stronę
     url = "https://hydro.imgw.pl/#/station/hydro/153180090?h=25"
     
     aktualny_stan = None
-    data_pomiaru = "Brak daty"
+    data_pomiaru = "Brak danych"
+    przeplyw = "Brak danych"
+    temperatura = "Brak danych"
     
     print("Otwieram wirtualną przeglądarkę i ładuję mapę IMGW...")
     
@@ -49,7 +36,6 @@ def sprawdz_stan_wody():
         
         ukryte_dane = {}
         
-        # Przechwytujemy niewidoczne dla zwykłego użytkownika zapytania, które strona wysyła do serwera po załadowaniu
         def handle_response(response):
             if "153180090" in response.url and response.status == 200:
                 try:
@@ -60,30 +46,37 @@ def sprawdz_stan_wody():
                     
         page.on("response", handle_response)
         
-        # Wchodzimy na stronę i dajemy jej 5 sekund na załadowanie się do końca
+        # Wchodzimy na stronę i czekamy aż wszystko się załaduje
         page.goto(url, wait_until="networkidle")
         page.wait_for_timeout(5000)
         
-        # Krok 1: Próba wyciągnięcia stanu z przechwyconego ruchu sieciowego
-        if "dane" in ukryte_dane:
-            stan_z_sieci = znajdz_wartosc(ukryte_dane["dane"], ["waterLevel", "stanWody", "value", "currentState"])
-            data_z_sieci = znajdz_wartosc(ukryte_dane["dane"], ["date", "measurementDate", "time", "dateMeasure"])
-            
-            if stan_z_sieci is not None:
-                aktualny_stan = str(int(float(stan_z_sieci)))
-            if data_z_sieci is not None:
-                data_pomiaru = str(data_z_sieci).replace("T", " ")[:16]
+        # Pobieramy cały tekst ze strony, żeby wyciągnąć wartości
+        tekst = page.inner_text("body")
         
-        # Krok 2 (Zabezpieczenie): Jeśli ruch sieciowy był zaszyfrowany, wyciągamy tekst wprost ze strony WWW
-        if not aktualny_stan:
-            tekst = page.inner_text("body")
-            m = re.search(r'Stan wody.*?(\d+)\s*cm', tekst, re.IGNORECASE)
-            if not m:
-                m = re.search(r'(\d+)\s*cm', tekst, re.IGNORECASE)
-            if m:
-                aktualny_stan = m.group(1)
-                data_pomiaru = "Odczyt bezpośrednio ze strony"
-                
+        # 1. Szukanie stanu wody
+        m_stan = re.search(r'Stan wody\s*(\d+)\s*cm', tekst, re.IGNORECASE)
+        if not m_stan:
+            m_stan = re.search(r'(\d+)\s*cm', tekst, re.IGNORECASE)
+        if m_stan:
+            aktualny_stan = m_stan.group(1)
+
+        # 2. Szukanie przepływu
+        m_przep = re.search(r'Przepływ\s*(\d+[.,]?\d*)\s*m³/s', tekst, re.IGNORECASE)
+        if m_przep:
+            przeplyw = m_przep.group(1) + " m³/s"
+
+        # 3. Szukanie temperatury wody
+        m_temp = re.search(r'Temperatura wody\s*(\d+[.,]?\d*)\s*°C', tekst, re.IGNORECASE)
+        if m_temp:
+            temperatura = m_temp.group(1) + " °C"
+
+        # 4. Data pomiaru z ukrytych danych JSON
+        if "dane" in ukryte_dane:
+            dane = str(ukryte_dane["dane"])
+            m_data = re.search(r'202\d-\d\d-\d\dT\d\d:\d\d', dane)
+            if m_data:
+                data_pomiaru = m_data.group(0).replace("T", " ")
+
         browser.close()
 
     if not aktualny_stan:
@@ -104,29 +97,32 @@ def sprawdz_stan_wody():
         print(f"Brak zmian ({aktualny_stan} cm), czekam dalej.")
         return
 
-    tendencja = "Brak danych ➖"
+    # Obliczanie tendencji
+    tendencja = "Bez zmian ➖"
     if poprzedni_stan and poprzedni_stan.isdigit() and aktualny_stan and aktualny_stan.isdigit():
         roznica = int(aktualny_stan) - int(poprzedni_stan)
         if roznica > 0:
             tendencja = f"Rosnąca 📈 (+{roznica} cm)"
         elif roznica < 0:
             tendencja = f"Spadkowa 📉 ({roznica} cm)"
-        else:
-            tendencja = "Bez zmian ➖"
 
     naglowek = "Poranny raport" if czas_na_raport else "Wykryto zmianę"
     
+    # Składanie ostatecznej wiadomości
     komunikat = (
-        f"Pomiar: {data_pomiaru}\n"
-        f"Stan aktualny: {aktualny_stan} cm\n"
-        f"Stan ostatni: {poprzedni_stan if poprzedni_stan else 'Brak'} cm\n"
-        f"Tendencja: {tendencja}"
+        f"📍 Miejsce: Wisła, Toruń\n"
+        f"📏 Aktualny stan: {aktualny_stan} cm\n"
+        f"📈 Tendencja: {tendencja}\n"
+        f"🌊 Przepływ: {przeplyw}\n"
+        f"🌡️ Temp. wody: {temperatura}\n"
+        f"🕒 Pomiar z: {data_pomiaru}"
     )
     
     stan_num = int(aktualny_stan) if aktualny_stan and aktualny_stan.isdigit() else 0
     priorytet = "high" if stan_num >= 530 else "default"
     
-    title_encoded = f"Wisła: {aktualny_stan} cm [{naglowek}]".encode("utf-8")
+    # Tytuł z polskimi znakami i emoji
+    title_encoded = f"🌊 Wisła Toruń: {aktualny_stan} cm [{naglowek}]".encode("utf-8")
     
     requests.post(
         f"https://ntfy.sh/{TOPIC}",
