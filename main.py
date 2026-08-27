@@ -5,7 +5,7 @@ import pytz
 from playwright.sync_api import sync_playwright
 import requests
 
-TOPIC = "stan-wody-wisla"
+TOPIC = "testy-api"
 
 STATE_FILE = "last_state.txt"
 DAILY_FILE = "last_daily.txt"
